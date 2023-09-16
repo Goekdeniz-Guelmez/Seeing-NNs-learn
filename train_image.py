@@ -10,14 +10,14 @@ from tqdm import tqdm
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Define variables
-image_path = 'DatasetImages/Artboard 2.png'
-hidden_size = 300
+image_path = 'DatasetImages/evg.jpg'
+hidden_size = 200
 num_hidden_layers = 30
 batch_size = 8000
 lr = 0.001
-num_epochs = 30
-proj_name = 'Artboard2'
-save_every_n_iterations = 2
+num_epochs = 60
+proj_name = 'Evangelion_wp'
+save_every_n_iterations = 1
 scheduler_step = 3
 
 # Create the dataset and data loader
