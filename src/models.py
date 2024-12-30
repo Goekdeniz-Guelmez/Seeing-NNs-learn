@@ -1,10 +1,8 @@
 import torch
 import torch.nn as nn
-import math
+import torch.nn.functional as F
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-import torch.nn as nn
 
 class Simple(nn.Module):
     """
@@ -324,8 +322,6 @@ class Fourier2D(nn.Module):
         return self.inner_model(fourier_features)
 
 
-import torch
-
 class CenteredLinearMap:
     """
     A utility class that performs centered linear mapping of 2D coordinates.
@@ -448,19 +444,406 @@ class CenteredLinearMap:
                 f"  Scale: {self.scale.tolist()}\n"
                 f"  Offset: {self.offset.tolist()}\n)")
     
+
 class Taylor(nn.Module):
-	def __init__(self, taylor_order=4, hidden_size=100, num_hidden_layers=7, linmap=None):
-		super(Taylor,self).__init__()
-		self.taylor_order = taylor_order
-		self._linmap = linmap
-		self.inner_model = SkipConn(hidden_size, num_hidden_layers, taylor_order*2 + 2)
+    """
+    Neural network that augments input with Taylor series terms (polynomial features)
+    before processing through a SkipConn network. Computes terms up to x^n for
+    each input dimension.
+    
+    Parameters:
+        taylor_order (int): Highest order of polynomial terms to compute (default: 4)
+        hidden_size (int): Number of neurons per hidden layer in SkipConn (default: 100)
+        num_hidden_layers (int): Number of hidden layers in SkipConn (default: 7)
+        dropout_rate (float): Dropout probability (default: 0.2)
+        linmap (object, optional): Linear mapping transform for input data
+    """
+    def __init__(
+			self,
+            taylor_order: int = 4,
+            hidden_size: int = 100,
+            num_hidden_layers: int = 7,
+			dropout_rate: float = 0.2,
+            linmap=None
+		):
+        super(Taylor, self).__init__()
+        
+        # Configuration
+        self.taylor_order = taylor_order
+        self._linmap = linmap
+        
+        # Calculate input size for inner model
+        # For each input dimension, we have terms: x, x^2, x^3, ..., x^n
+        # Plus the original 2D input
+        inner_input_size = taylor_order * 2 + 2
+        
+        # Initialize inner SkipConn model with dropout
+        self.inner_model = SkipConn(
+            hidden_size=hidden_size,
+            num_hidden_layers=num_hidden_layers,
+            init_size=inner_input_size,
+            dropout_rate=dropout_rate,
+            linmap=None  # We handle mapping here
+        )
+        
+        # Register powers for computing Taylor terms
+        self.register_buffer(
+            'powers',
+            torch.arange(2, taylor_order + 1, dtype=torch.float)
+        )
 
-	def forward(self,x):
-		if self._linmap:
-			x = self._linmap.map(x)
-		series = [x]
-		for n in range(1, self.taylor_order+1):
-			series.append(x**n)
-		taylor = torch.cat(series, 1)
-		return self.inner_model(taylor)
+    def compute_taylor_terms(self, x):
+        """
+        Compute polynomial terms up to specified order for each input dimension.
+        
+        Args:
+            x (torch.Tensor): Input tensor of shape (batch_size, 2)
+            
+        Returns:
+            torch.Tensor: Tensor containing polynomial terms up to specified order
+        """
+        terms = [x]  # Start with linear term
+        
+        # Pre-compute x^2 once as it's needed for all higher powers
+        x_squared = x ** 2
+        terms.append(x_squared)
+        
+        # Use accumulated multiplication for higher powers to avoid numerical issues
+        if self.taylor_order > 2:
+            curr_power = x_squared
+            for power in range(3, self.taylor_order + 1):
+                curr_power = curr_power * x  # More stable than x ** power
+                terms.append(curr_power)
+        
+        # Concatenate all terms
+        return torch.cat(terms, dim=1)
 
+    def forward(self, x):
+        """
+        Forward pass computing Taylor series terms and processing through SkipConn.
+        
+        Args:
+            x (torch.Tensor): Input tensor of shape (batch_size, 2)
+            
+        Returns:
+            torch.Tensor: Output tensor mapped to range [0,1]
+        """
+        # Apply optional linear mapping
+        if self._linmap is not None:
+            x = self._linmap.map(x)
+        
+        # Compute Taylor series terms
+        taylor_features = self.compute_taylor_terms(x)
+        
+        # Process through inner model
+        return self.inner_model(taylor_features)
+    
+    def extra_repr(self) -> str:
+        """
+        Additional information to be displayed in string representation.
+        
+        Returns:
+            str: String containing model configuration
+        """
+        return f'taylor_order={self.taylor_order}'
+    
+
+class BasicAutoencoder(nn.Module):
+    """
+    Basic fully-connected autoencoder for image reconstruction.
+    
+    Parameters:
+        input_size (int): Size of flattened input image (width * height * channels)
+        hidden_size (int): Size of the bottleneck representation
+        dropout_rate (float): Dropout probability
+    """
+    def __init__(self, input_size=784, hidden_size=128, dropout_rate=0.2):
+        super(BasicAutoencoder, self).__init__()
+        
+        # Encoder
+        self.encoder = nn.Sequential(
+            nn.Linear(input_size, hidden_size * 4),
+            nn.BatchNorm1d(hidden_size * 4),
+            nn.ReLU(),
+            nn.Dropout(dropout_rate),
+            
+            nn.Linear(hidden_size * 4, hidden_size * 2),
+            nn.BatchNorm1d(hidden_size * 2),
+            nn.ReLU(),
+            nn.Dropout(dropout_rate),
+            
+            nn.Linear(hidden_size * 2, hidden_size)
+        )
+        
+        # Decoder
+        self.decoder = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size * 2),
+            nn.BatchNorm1d(hidden_size * 2),
+            nn.ReLU(),
+            nn.Dropout(dropout_rate),
+            
+            nn.Linear(hidden_size * 2, hidden_size * 4),
+            nn.BatchNorm1d(hidden_size * 4),
+            nn.ReLU(),
+            nn.Dropout(dropout_rate),
+            
+            nn.Linear(hidden_size * 4, input_size),
+            nn.Sigmoid()  # For image pixel values in [0,1]
+        )
+        
+    def forward(self, x):
+        # Flatten input
+        x = x.view(x.size(0), -1)
+        # Encode then decode
+        encoded = self.encoder(x)
+        decoded = self.decoder(encoded)
+        # Reshape to original dimensions
+        return decoded.view(x.size())
+
+
+class ConvolutionalAutoencoder(nn.Module):
+    """
+    Convolutional autoencoder for image reconstruction with skip connections.
+    
+    Parameters:
+        in_channels (int): Number of input image channels
+        base_channels (int): Base number of convolutional channels
+        latent_dim (int): Size of the latent representation
+        input_size (tuple): Input image dimensions (height, width)
+    """
+    def __init__(self, in_channels=1, base_channels=32, latent_dim=128, input_size=(28, 28)):
+        super(ConvolutionalAutoencoder, self).__init__()
+        
+        # Calculate feature map size after encodings
+        self.feature_size = (input_size[0] // 4, input_size[1] // 4)
+        
+        # Encoder
+        self.encoder = nn.ModuleList([
+            # Layer 1
+            nn.Sequential(
+                nn.Conv2d(in_channels, base_channels, kernel_size=3, padding=1),
+                nn.BatchNorm2d(base_channels),
+                nn.ReLU(),
+                nn.MaxPool2d(2)
+            ),
+            # Layer 2
+            nn.Sequential(
+                nn.Conv2d(base_channels, base_channels * 2, kernel_size=3, padding=1),
+                nn.BatchNorm2d(base_channels * 2),
+                nn.ReLU(),
+                nn.MaxPool2d(2)
+            )
+        ])
+        
+        # Flatten and map to latent space
+        self.to_latent = nn.Linear(
+            base_channels * 2 * self.feature_size[0] * self.feature_size[1], 
+            latent_dim
+        )
+        
+        # Map from latent space to features
+        self.from_latent = nn.Linear(
+            latent_dim,
+            base_channels * 2 * self.feature_size[0] * self.feature_size[1]
+        )
+        
+        # Decoder with skip connections
+        self.decoder = nn.ModuleList([
+            # Layer 1
+            nn.Sequential(
+                nn.ConvTranspose2d(base_channels * 4, base_channels * 2, 
+                                 kernel_size=2, stride=2),
+                nn.BatchNorm2d(base_channels * 2),
+                nn.ReLU()
+            ),
+            # Layer 2
+            nn.Sequential(
+                nn.ConvTranspose2d(base_channels * 3, base_channels,
+                                 kernel_size=2, stride=2),
+                nn.BatchNorm2d(base_channels),
+                nn.ReLU()
+            ),
+            # Final layer
+            nn.Sequential(
+                nn.Conv2d(base_channels, in_channels, kernel_size=3, padding=1),
+                nn.Sigmoid()
+            )
+        ])
+        
+    def forward(self, x):
+        # Store skip connections
+        skips = []
+        
+        # Encoding
+        for encoder_layer in self.encoder:
+            x = encoder_layer(x)
+            skips.append(x)
+        
+        # Flatten and map to latent space
+        x = x.view(x.size(0), -1)
+        x = self.to_latent(x)
+        
+        # Map back to feature space
+        x = self.from_latent(x)
+        x = x.view(x.size(0), -1, *self.feature_size)
+        
+        # Decoding with skip connections
+        for i, decoder_layer in enumerate(self.decoder[:-1]):
+            x = decoder_layer(x)
+            skip = skips[-(i+1)]
+            x = torch.cat([x, skip], dim=1)
+        
+        # Final layer without skip connection
+        x = self.decoder[-1](x)
+        return x
+
+
+class VariationalAutoencoder(nn.Module):
+    """
+    Variational autoencoder (VAE) for image reconstruction.
+    
+    Parameters:
+        in_channels (int): Number of input image channels
+        base_channels (int): Base number of convolutional channels
+        latent_dim (int): Size of the latent representation
+        input_size (tuple): Input image dimensions (height, width)
+    """
+    def __init__(
+            self,
+            in_channels: int = 1,
+            base_channels: int = 32,
+            latent_dim: int = 128,
+            input_size: tuple = (28, 28)
+		):
+        super(VariationalAutoencoder, self).__init__()
+        
+        self.latent_dim = latent_dim
+        self.feature_size = (input_size[0] // 4, input_size[1] // 4)
+        feature_dims = base_channels * 4 * self.feature_size[0] * self.feature_size[1]
+        
+        # Encoder
+        self.encoder = nn.Sequential(
+            nn.Conv2d(
+                in_channels,
+                base_channels,
+                kernel_size=3,
+                stride=2,
+                padding=1
+			),
+            nn.BatchNorm2d(base_channels),
+            nn.ReLU(),
+            
+            nn.Conv2d(
+                base_channels,
+                base_channels * 2,
+                kernel_size=3,
+                stride=1,
+                padding=1
+			),
+            nn.BatchNorm2d(base_channels * 2),
+            nn.ReLU(),
+            
+            nn.Conv2d(
+                base_channels * 2,
+                base_channels * 4,
+                kernel_size=3,
+                stride=2,
+                padding=1
+			),
+            nn.BatchNorm2d(base_channels * 4),
+            nn.ReLU()
+        )
+        
+        # Latent space mapping
+        self.fc_mu = nn.Linear(feature_dims, latent_dim)
+        self.fc_var = nn.Linear(feature_dims, latent_dim)
+        self.fc_decode = nn.Linear(latent_dim, feature_dims)
+        
+        # Decoder
+        self.decoder = nn.Sequential(
+            nn.ConvTranspose2d(
+                base_channels * 4,
+                base_channels * 2, 
+				kernel_size=3,
+                stride=2,
+                padding=1,
+                output_padding=1
+			),
+            nn.BatchNorm2d(base_channels * 2),
+            nn.ReLU(),
+            
+            nn.ConvTranspose2d(
+                base_channels * 2,
+                base_channels,
+				kernel_size=3,
+                stride=1,
+                padding=1
+			),
+            nn.BatchNorm2d(base_channels),
+            nn.ReLU(),
+            
+            nn.ConvTranspose2d(
+                base_channels,
+                in_channels,
+				kernel_size=3,
+                stride=2,
+                padding=1,
+                output_padding=1
+			),
+            nn.Sigmoid()
+        )
+        
+    def encode(self, x):
+        # Encode input
+        x = self.encoder(x)
+        x = x.view(x.size(0), -1)
+        
+        # Get latent parameters
+        mu = self.fc_mu(x)
+        log_var = self.fc_var(x)
+        
+        return mu, log_var
+    
+    def reparameterize(self, mu, log_var):
+        std = torch.exp(0.5 * log_var)
+        eps = torch.randn_like(std)
+        return mu + eps * std
+    
+    def decode(self, z):
+        # Map from latent space
+        x = self.fc_decode(z)
+        x = x.view(x.size(0), -1, *self.feature_size)
+        
+        # Decode
+        return self.decoder(x)
+    
+    def forward(self, x):
+        # Encode and get latent parameters
+        mu, log_var = self.encode(x)
+        
+        # Sample from latent space
+        z = self.reparameterize(mu, log_var)
+        
+        # Decode
+        return self.decode(z), mu, log_var
+
+# Custom loss function for VAE
+def vae_loss(recon_x, x, mu, log_var, kld_weight=0.005):
+    """
+    Compute VAE loss with reconstruction and KL divergence terms.
+    
+    Args:
+        recon_x (torch.Tensor): Reconstructed image
+        x (torch.Tensor): Original image
+        mu (torch.Tensor): Mean of latent distribution
+        log_var (torch.Tensor): Log variance of latent distribution
+        kld_weight (float): Weight for KL divergence term
+    """
+    # Reconstruction loss (binary cross entropy)
+    recon_loss = F.binary_cross_entropy(recon_x, x, reduction='sum')
+    
+    # KL divergence loss
+    kld_loss = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
+    
+    # Total loss
+    return recon_loss + kld_weight * kld_loss
