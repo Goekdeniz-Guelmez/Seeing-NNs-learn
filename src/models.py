@@ -557,7 +557,12 @@ class BasicAutoencoder(nn.Module):
         hidden_size (int): Size of the bottleneck representation
         dropout_rate (float): Dropout probability
     """
-    def __init__(self, input_size=784, hidden_size=128, dropout_rate=0.2):
+    def __init__(
+            self,
+            input_size: int = 784,
+            hidden_size: int = 128,
+            dropout_rate: float = 0.2
+		):
         super(BasicAutoencoder, self).__init__()
         
         # Encoder
@@ -611,7 +616,13 @@ class ConvolutionalAutoencoder(nn.Module):
         latent_dim (int): Size of the latent representation
         input_size (tuple): Input image dimensions (height, width)
     """
-    def __init__(self, in_channels=1, base_channels=32, latent_dim=128, input_size=(28, 28)):
+    def __init__(
+            self,
+            in_channels: int = 1,
+            base_channels: int = 32,
+            latent_dim: int = 128,
+            input_size: tuple = (28, 28)
+		):
         super(ConvolutionalAutoencoder, self).__init__()
         
         # Calculate feature map size after encodings
@@ -826,24 +837,3 @@ class VariationalAutoencoder(nn.Module):
         
         # Decode
         return self.decode(z), mu, log_var
-
-# Custom loss function for VAE
-def vae_loss(recon_x, x, mu, log_var, kld_weight=0.005):
-    """
-    Compute VAE loss with reconstruction and KL divergence terms.
-    
-    Args:
-        recon_x (torch.Tensor): Reconstructed image
-        x (torch.Tensor): Original image
-        mu (torch.Tensor): Mean of latent distribution
-        log_var (torch.Tensor): Log variance of latent distribution
-        kld_weight (float): Weight for KL divergence term
-    """
-    # Reconstruction loss (binary cross entropy)
-    recon_loss = F.binary_cross_entropy(recon_x, x, reduction='sum')
-    
-    # KL divergence loss
-    kld_loss = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
-    
-    # Total loss
-    return recon_loss + kld_weight * kld_loss
