@@ -324,30 +324,130 @@ class Fourier2D(nn.Module):
         return self.inner_model(fourier_features)
 
 
-class CenteredLinearMap():
-	def __init__(self, xmin=-2.5, xmax=1.0, ymin=-1.1, ymax=1.1, x_size=None, y_size=None):
-		if x_size is not None:
-			x_m = x_size/(xmax - xmin)
-		else: 
-			x_m = 1.
-		if y_size is not None:
-			y_m = y_size/(ymax - ymin)
-		else: 
-			y_m = 1.
-		x_b = -(xmin + xmax)*x_m/2 - 1 # TODO REMOVE!
-		y_b = -(ymin + ymax)*y_m/2
-		self.m = torch.tensor([x_m, y_m], dtype=torch.float)
-		self.b = torch.tensor([x_b, y_b], dtype=torch.float)
+import torch
 
+class CenteredLinearMap:
+    """
+    A utility class that performs centered linear mapping of 2D coordinates.
+    Maps input coordinates from one range to another while centering the transformation.
+    
+    Parameters:
+        xmin (float): Minimum x-coordinate of input range (default: -2.5)
+        xmax (float): Maximum x-coordinate of input range (default: 1.0)
+        ymin (float): Minimum y-coordinate of input range (default: -1.1)
+        ymax (float): Maximum y-coordinate of input range (default: 1.1)
+        x_size (float, optional): Target x range size. If None, maintains scale (default: None)
+        y_size (float, optional): Target y range size. If None, maintains scale (default: None)
+    """
+    def __init__(
+			self,
+			xmin: float = -2.5,
+			xmax: float = 1.0,
+			ymin: float = -1.1,
+			ymax: float = 1.1,
+			x_size=None,
+			y_size=None
+		):
+        # Validate input ranges
+        if xmax <= xmin or ymax <= ymin:
+            raise ValueError("Max values must be greater than min values")
+            
+        # Calculate x scaling factor
+        if x_size is not None:
+            if x_size <= 0:
+                raise ValueError("x_size must be positive")
+            x_scale = x_size / (xmax - xmin)
+        else:
+            x_scale = 1.0
+            
+        # Calculate y scaling factor
+        if y_size is not None:
+            if y_size <= 0:
+                raise ValueError("y_size must be positive")
+            y_scale = y_size / (ymax - ymin)
+        else:
+            y_scale = 1.0
+            
+        # Calculate centering offsets
+        x_offset = -(xmin + xmax) * x_scale / 2
+        y_offset = -(ymin + ymax) * y_scale / 2
+        
+        # Store transformation parameters as tensors
+        self.scale = torch.tensor([x_scale, y_scale], dtype=torch.float)
+        self.offset = torch.tensor([x_offset, y_offset], dtype=torch.float)
+        
+        # Store original parameters for reference
+        self.input_range = {
+            'x': (xmin, xmax),
+            'y': (ymin, ymax)
+        }
+        self.target_size = {
+            'x': x_size,
+            'y': y_size
+        }
 
-	def map(self, x):
-		m = self.m.to(device)
-		b = self.b.to(device)
-		return m*x + b
-
-
-# Taylor features, x, x^2, x^3, ...
-# surprisingly terrible
+    def map(self, x):
+        """
+        Apply the centered linear transformation to input coordinates.
+        
+        Args:
+            x (torch.Tensor): Input coordinates tensor of shape (batch_size, 2)
+            
+        Returns:
+            torch.Tensor: Transformed coordinates tensor of same shape as input
+        """
+        # Move transformation parameters to same device as input
+        scale = self.scale.to(x.device)
+        offset = self.offset.to(x.device)
+        
+        # Apply linear transformation: scale * x + offset
+        return scale * x + offset
+    
+    def inverse_map(self, x):
+        """
+        Apply the inverse transformation to mapped coordinates.
+        
+        Args:
+            x (torch.Tensor): Transformed coordinates tensor of shape (batch_size, 2)
+            
+        Returns:
+            torch.Tensor: Original coordinates tensor of same shape as input
+        """
+        # Move transformation parameters to same device as input
+        scale = self.scale.to(x.device)
+        offset = self.offset.to(x.device)
+        
+        # Apply inverse transformation: (x - offset) / scale
+        return (x - offset) / scale
+    
+    @property
+    def transformation_params(self):
+        """
+        Get the current transformation parameters.
+        
+        Returns:
+            dict: Dictionary containing scale and offset tensors
+        """
+        return {
+            'scale': self.scale,
+            'offset': self.offset
+        }
+        
+    def __repr__(self):
+        """
+        String representation of the transformation.
+        
+        Returns:
+            str: Formatted string describing the transformation
+        """
+        return (f"CenteredLinearMap(\n"
+                f"  Input range x: [{self.input_range['x'][0]}, {self.input_range['x'][1]}]\n"
+                f"  Input range y: [{self.input_range['y'][0]}, {self.input_range['y'][1]}]\n"
+                f"  Target size x: {self.target_size['x']}\n"
+                f"  Target size y: {self.target_size['y']}\n"
+                f"  Scale: {self.scale.tolist()}\n"
+                f"  Offset: {self.offset.tolist()}\n)")
+    
 class Taylor(nn.Module):
 	def __init__(self, taylor_order=4, hidden_size=100, num_hidden_layers=7, linmap=None):
 		super(Taylor,self).__init__()
