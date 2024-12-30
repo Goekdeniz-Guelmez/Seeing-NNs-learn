@@ -4,71 +4,159 @@ import math
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+import torch.nn as nn
+
 class Simple(nn.Module):
-	""" 
-	Very simple linear torch model. Uses relu activation and\
-	one final sigmoid activation.
+    """
+    A simple linear PyTorch model with batch normalization and dropout.
+    Uses ReLU activation in hidden layers and maps final output to [0,1] range
+    using tanh transformation.
 
-	Parameters: 
-	hidden_size (float): number of parameters per hidden layer
-	num_hidden_layers (float): number of hidden layers
-	"""
-	def __init__(self, hidden_size=100, num_hidden_layers=7, init_size=2):
-		super(Simple,self).__init__()
-		layers = [nn.Linear(init_size, hidden_size),
-							nn.ReLU()]
-		for _ in range(num_hidden_layers):
-			layers.append(nn.Linear(hidden_size, hidden_size))
-			layers.append(nn.ReLU())
-		layers.append(nn.Linear(hidden_size, 1))
-		# layers.append(nn.Sigmoid())
-		self.tanh = nn.Tanh()
-		self.seq = nn.Sequential(*layers)
+    Parameters:
+        hidden_size (int): Number of neurons per hidden layer
+        num_hidden_layers (int): Number of hidden layers in the network
+        init_size (int): Input feature dimension
+        dropout_rate (float): Dropout probability (default: 0.2)
+    """
+    def __init__(
+			self,
+			hidden_size: int = 100,
+			num_hidden_layers: int = 7,
+			init_size: int = 2,
+			dropout_rate: float = 0.2
+		):
+        super(Simple, self).__init__()
+        
+        # Initialize layer containers
+        self.layers = nn.ModuleList()
+        
+        # Input layer with batch norm
+        self.layers.extend([
+            nn.Linear(init_size, hidden_size),
+            nn.BatchNorm1d(hidden_size),
+            nn.ReLU(),
+            nn.Dropout(dropout_rate)
+        ])
+        
+        # Hidden layers
+        for _ in range(num_hidden_layers):
+            self.layers.extend([
+                nn.Linear(hidden_size, hidden_size),
+                nn.BatchNorm1d(hidden_size),
+                nn.ReLU(),
+                nn.Dropout(dropout_rate)
+            ])
+        
+        # Output layer
+        self.layers.append(nn.Linear(hidden_size, 1))
+        
+        # Final activation
+        self.tanh = nn.Tanh()
+        
+        # Create sequential model
+        self.seq = nn.Sequential(*self.layers)
 
-	def forward(self,x):
-		return (self.tanh(self.seq(x))+1)/2
+    def forward(self, x):
+        """
+        Forward pass of the model.
+        
+        Args:
+            x (torch.Tensor): Input tensor
+            
+        Returns:
+            torch.Tensor: Output tensor mapped to range [0,1]
+        """
+        # Pass through network and map to [0,1] range
+        return (self.tanh(self.seq(x)) + 1) / 2
 
 
 class SkipConn(nn.Module):
-	""" 
-	Linear torch model with skip connections between every hidden layer\
-	as well as the original input appended to every layer.\
-	Because of this, each hidden layer contains `2*hidden_size+2` params\
-	due to skip connections.
-	Uses relu activations and one final sigmoid activation.
+    """
+    A PyTorch model with skip connections between hidden layers and input concatenation.
+    Each hidden layer receives the original input and previous layer outputs via skip connections.
+    Uses LeakyReLU activations and maps final output to [0,1] range using tanh transformation.
 
-	Parameters: 
-	hidden_size (float): number of non-skip parameters per hidden layer
-	num_hidden_layers (float): number of hidden layers
-	"""
-	def __init__(self, hidden_size=100, num_hidden_layers=7, init_size=2, linmap=None):
-		super(SkipConn,self).__init__()
-		out_size = hidden_size
+    Parameters:
+        hidden_size (int): Number of non-skip parameters per hidden layer
+        num_hidden_layers (int): Number of hidden layers in the network
+        init_size (int): Input feature dimension
+        dropout_rate (float): Dropout probability (default: 0.2)
+        linmap (object, optional): Linear mapping transform for input data
+        leaky_slope (float): Negative slope for LeakyReLU (default: 0.01)
+    """
+    def __init__(
+        	self,
+			hidden_size: int = 100,
+            num_hidden_layers: int = 7,
+            init_size: int = 2, 
+			dropout_rate: float = 0.2,
+			linmap=None,
+			leaky_slope: float = 0.01
+		):
+        super(SkipConn, self).__init__()
+        
+        # Store configuration
+        self.hidden_size = hidden_size
+        self.init_size = init_size
+        self._linmap = linmap
+        
+        # Initial layer
+        self.inLayer = nn.Sequential(
+            nn.Linear(init_size, hidden_size),
+            nn.BatchNorm1d(hidden_size),
+            nn.LeakyReLU(negative_slope=leaky_slope),
+            nn.Dropout(dropout_rate)
+        )
+        
+        # Hidden layers with skip connections
+        self.hidden = nn.ModuleList()
+        for i in range(num_hidden_layers):
+            # Input size includes current features, previous layer output, and original input
+            in_size = hidden_size*2 + init_size if i > 0 else hidden_size + init_size
+            
+            self.hidden.append(nn.Sequential(
+                nn.Linear(in_size, hidden_size),
+                nn.BatchNorm1d(hidden_size),
+                nn.LeakyReLU(negative_slope=leaky_slope),
+                nn.Dropout(dropout_rate)
+            ))
+        
+        # Output layer
+        self.outLayer = nn.Linear(hidden_size*2 + init_size, 1)
+        
+        # Final activation
+        self.tanh = nn.Tanh()
 
-		self.inLayer = nn.Linear(init_size, out_size)
-		self.relu = nn.LeakyReLU()
-		hidden = []
-		for i in range(num_hidden_layers):
-			in_size = out_size*2 + init_size if i>0 else out_size + init_size
-			hidden.append(nn.Linear(in_size, out_size))
-		self.hidden = nn.ModuleList(hidden)
-		self.outLayer = nn.Linear(out_size*2+init_size, 1)
-		self.tanh = nn.Tanh()
-		self.sig = nn.Sigmoid()
-		self._linmap = linmap
-
-	def forward(self, x):
-		if self._linmap:
-			x = self._linmap.map(x)
-		cur = self.relu(self.inLayer(x))
-		prev = torch.tensor([]).to(device)
-		for layer in self.hidden:
-			combined = torch.cat([cur, prev, x], 1)
-			prev = cur
-			cur = self.relu(layer(combined))
-		y = self.outLayer(torch.cat([cur, prev, x], 1))
-		return (self.tanh(y)+1)/2 # hey I think this works slightly better
-		# return self.sig(y)
+    def forward(self, x):
+        """
+        Forward pass of the model.
+        
+        Args:
+            x (torch.Tensor): Input tensor
+            
+        Returns:
+            torch.Tensor: Output tensor mapped to range [0,1]
+        """
+        # Apply optional linear mapping
+        if self._linmap is not None:
+            x = self._linmap.map(x)
+        
+        # Initial layer
+        cur = self.inLayer(x)
+        prev = torch.empty(x.size(0), 0, device=x.device)
+        
+        # Process through hidden layers with skip connections
+        for layer in self.hidden:
+            # Combine current features, previous layer output, and original input
+            combined = torch.cat([cur, prev, x], dim=1)
+            prev = cur
+            cur = layer(combined)
+        
+        # Final layer with skip connections
+        y = self.outLayer(torch.cat([cur, prev, x], dim=1))
+        
+        # Map output to [0,1] range using tanh transformation
+        return (self.tanh(y) + 1) / 2
 
 
 
