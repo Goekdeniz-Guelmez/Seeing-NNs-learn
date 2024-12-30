@@ -159,54 +159,168 @@ class SkipConn(nn.Module):
         return (self.tanh(y) + 1) / 2
 
 
-
 class Fourier(nn.Module):
-	def __init__(self, fourier_order=4, hidden_size=100, num_hidden_layers=7, linmap=None):
-		""" 
-		Linear torch model that adds Fourier Features to the initial input x as \
-		sin(x) + cos(x), sin(2x) + cos(2x), sin(3x) + cos(3x), ...
-		These features are then inputted to a SkipConn network.
+    """
+    Neural network that augments input with Fourier features before processing through a SkipConn network.
+    Adds sin(nx) + cos(nx) features for n=1...fourier_order.
+    
+    Parameters:
+        fourier_order (int): Number of Fourier features to generate (default: 4)
+        hidden_size (int): Number of neurons per hidden layer in SkipConn (default: 100)
+        num_hidden_layers (int): Number of hidden layers in SkipConn (default: 7)
+        dropout_rate (float): Dropout probability (default: 0.2)
+        linmap (object, optional): Linear mapping transform for input data
+    """
+    def __init__(
+			self,
+			fourier_order: int = 4,
+			hidden_size: int = 100,
+			num_hidden_layers: int = 7, 
+			dropout_rate: float = 0.2,
+			linmap=None
+		):
+        super(Fourier, self).__init__()
+        
+        # Configuration
+        self.fourier_order = fourier_order
+        self._linmap = linmap
+        
+        # Calculate input size for inner model (2 features per order (sin+cos) * fourier_order + original 2D input)
+        inner_input_size = fourier_order * 4 + 2
+        
+        # Initialize inner SkipConn model with dropout
+        self.inner_model = SkipConn(
+            hidden_size=hidden_size,
+            num_hidden_layers=num_hidden_layers,
+            init_size=inner_input_size,
+            dropout_rate=dropout_rate,
+            linmap=None  # We handle mapping here
+        )
+        
+        # Register orders as buffer to move with model to correct device
+        self.register_buffer('orders', torch.arange(1, fourier_order + 1, dtype=torch.float))
 
-		Parameters: 
-		fourier_order (int): number fourier features to use. Each addition adds 4x\
-		 parameters to each layer.
-		hidden_size (float): number of non-skip parameters per hidden layer (SkipConn)
-		num_hidden_layers (float): number of hidden layers (SkipConn)
-		"""
-		super(Fourier,self).__init__()
-		self.fourier_order = fourier_order
-		self.inner_model = SkipConn(hidden_size, num_hidden_layers, fourier_order*4 + 2)
-		self._linmap = linmap
-		self.orders = torch.arange(1, fourier_order + 1).float().to(device)
-
-	def forward(self,x):
-		if self._linmap:
-			x = self._linmap.map(x)
-		x = x.unsqueeze(-1)  # add an extra dimension for broadcasting
-		fourier_features = torch.cat([torch.sin(self.orders * x), torch.cos(self.orders * x), x], dim=-1)
-		fourier_features = fourier_features.view(x.shape[0], -1)  # flatten the last two dimensions
-		return self.inner_model(fourier_features)
+    def forward(self, x):
+        """
+        Forward pass computing Fourier features and processing through SkipConn.
+        
+        Args:
+            x (torch.Tensor): Input tensor of shape (batch_size, 2)
+            
+        Returns:
+            torch.Tensor: Output tensor mapped to range [0,1]
+        """
+        # Apply optional linear mapping
+        if self._linmap is not None:
+            x = self._linmap.map(x)
+        
+        # Add dimension for broadcasting with orders
+        x = x.unsqueeze(-1)  # Shape: (batch_size, 2, 1)
+        
+        # Compute Fourier features
+        fourier_features = torch.cat([
+            torch.sin(self.orders * x),  # sin(nx)
+            torch.cos(self.orders * x),  # cos(nx)
+            x  # original input
+        ], dim=-1)
+        
+        # Flatten features
+        fourier_features = fourier_features.reshape(x.shape[0], -1)
+        
+        # Process through inner model
+        return self.inner_model(fourier_features)
 
 
 class Fourier2D(nn.Module):
-    def __init__(self, fourier_order=4, hidden_size=100, num_hidden_layers=7, linmap=None):
-        super(Fourier2D,self).__init__()
+    """
+    Neural network that augments 2D input with 2D Fourier features before processing through a SkipConn network.
+    Computes products of sin/cos features for both dimensions.
+    
+    Parameters:
+        fourier_order (int): Number of Fourier features per dimension (default: 4)
+        hidden_size (int): Number of neurons per hidden layer in SkipConn (default: 100)
+        num_hidden_layers (int): Number of hidden layers in SkipConn (default: 7)
+        dropout_rate (float): Dropout probability (default: 0.2)
+        linmap (object, optional): Linear mapping transform for input data
+    """
+    def __init__(
+			self,
+			fourier_order: int = 4,
+			hidden_size: int = 100,
+			num_hidden_layers: int = 7, 
+			dropout_rate: float = 0.2,
+			linmap=None
+		):
+        super(Fourier2D, self).__init__()
+        
+        # Configuration
         self.fourier_order = fourier_order
-        self.inner_model = SkipConn(hidden_size, num_hidden_layers, (fourier_order*fourier_order*4) + 2)
         self._linmap = linmap
-        self.orders = torch.arange(0, fourier_order).float().to(device)
+        
+        # Calculate input size for inner model (4 features per order combination + original 2D input)
+        inner_input_size = (fourier_order * fourier_order * 4) + 2
+        
+        # Initialize inner SkipConn model with dropout
+        self.inner_model = SkipConn(
+            hidden_size=hidden_size,
+            num_hidden_layers=num_hidden_layers,
+            init_size=inner_input_size,
+            dropout_rate=dropout_rate,
+            linmap=None  # We handle mapping here
+        )
+        
+        # Register orders as buffer to move with model to correct device
+        self.register_buffer('orders', torch.arange(0, fourier_order, dtype=torch.float))
 
-    def forward(self,x):
-        if self._linmap:
-            x = self._linmap.map(x)
-        features = [x]
+    def compute_2d_fourier_features(self, x):
+        """
+        Compute 2D Fourier features as products of sin/cos terms.
+        
+        Args:
+            x (torch.Tensor): Input tensor of shape (batch_size, 2)
+            
+        Returns:
+            torch.Tensor: Fourier features tensor
+        """
+        features = [x]  # Start with original input
+        
+        # Compute product terms for all order combinations
         for n in self.orders:
             for m in self.orders:
-                features.append((torch.cos(n*x[:,0])*torch.cos(m*x[:,1])).unsqueeze(-1))
-                features.append((torch.cos(n*x[:,0])*torch.sin(m*x[:,1])).unsqueeze(-1))
-                features.append((torch.sin(n*x[:,0])*torch.cos(m*x[:,1])).unsqueeze(-1))
-                features.append((torch.sin(n*x[:,0])*torch.sin(m*x[:,1])).unsqueeze(-1))
-        fourier_features = torch.cat(features, 1)
+                # Compute trig products using broadcasting
+                cos_n_x = torch.cos(n * x[:, 0])
+                sin_n_x = torch.sin(n * x[:, 0])
+                cos_m_y = torch.cos(m * x[:, 1])
+                sin_m_y = torch.sin(m * x[:, 1])
+                
+                # Add all product combinations
+                features.extend([
+                    (cos_n_x * cos_m_y).unsqueeze(-1),  # cos(nx)cos(my)
+                    (cos_n_x * sin_m_y).unsqueeze(-1),  # cos(nx)sin(my)
+                    (sin_n_x * cos_m_y).unsqueeze(-1),  # sin(nx)cos(my)
+                    (sin_n_x * sin_m_y).unsqueeze(-1)   # sin(nx)sin(my)
+                ])
+        
+        return torch.cat(features, dim=1)
+
+    def forward(self, x):
+        """
+        Forward pass computing 2D Fourier features and processing through SkipConn.
+        
+        Args:
+            x (torch.Tensor): Input tensor of shape (batch_size, 2)
+            
+        Returns:
+            torch.Tensor: Output tensor mapped to range [0,1]
+        """
+        # Apply optional linear mapping
+        if self._linmap is not None:
+            x = self._linmap.map(x)
+        
+        # Compute 2D Fourier features
+        fourier_features = self.compute_2d_fourier_features(x)
+        
+        # Process through inner model
         return self.inner_model(fourier_features)
 
 
