@@ -114,6 +114,10 @@ def train_model(model_name, config, dataset, device):
             if model_name == 'VariationalAutoencoder':
                 y_pred, mu, log_var = model(x)
                 loss = loss_func((y_pred, mu, log_var), y)
+            elif model_name == 'VisionTransformer':
+                x = model.process_input(x)
+                y_pred = model(x)
+                loss = loss_func(y_pred, y.permute(0, 3, 1, 2))  # Adjust target format
             else:
                 y_pred = model(x)
                 loss = loss_func(y_pred.squeeze(), y)
@@ -147,15 +151,25 @@ def train_model(model_name, config, dataset, device):
     create_video(config['proj_name'])
     return model
 
-def save_visualization(model, proj_name, frame, resx, resy, linspace, device):
+def save_visualization(model, proj_name, frame, resx, resy, linspace, device, model_name='SkipConn'):
     """Save current model output as image"""
     model.eval()
     with torch.no_grad():
-        output = renderModel(model, resx=resx, resy=resy, linspace=linspace)
+        if model_name == 'VisionTransformer':
+            # For transformer, we need to create a proper image input
+            coords = linspace.unsqueeze(0)  # Add batch dimension
+            # Create a 3-channel input by repeating coordinates
+            coords = coords.repeat(1, 3, 1, 1)
+            output = model(coords)
+            # Take first image from batch
+            output = output[0].permute(1, 2, 0).cpu().numpy()
+        else:
+            output = renderModel(model, resx=resx, resy=resy, linspace=linspace)
+        
         plt.imsave(
             f'./frames/{proj_name}/{frame:05d}.png',
             output,
-            cmap='magma',
+            cmap='magma' if model_name != 'VisionTransformer' else None,
             origin='lower'
         )
     model.train()
@@ -168,7 +182,6 @@ def create_video(proj_name):
         f'./frames/{proj_name}/{proj_name}.mp4'
     )
 
-# Configuration
 config = {
     'image_path': 'DatasetImages/evg.jpg',
     'hidden_size': 200,
@@ -207,5 +220,5 @@ if __name__ == "__main__":
     dataset = ImageDataset(config['image_path'])
     
     # Train model (choose architecture)
-    model_name = "ConvolutionalAutoencoder"
+    model_name = "VariationalAutoencoder"
     trained_model = train_model(model_name, config, dataset, device)
