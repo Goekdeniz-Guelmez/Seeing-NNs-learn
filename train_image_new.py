@@ -78,6 +78,19 @@ def train_model(model_name, config, dataset, device):
             latent_dim=config['hidden_size'],
             input_size=(resx, resy)
         ).to(device)
+    elif model_name == 'VisionTransformer':
+        model = VisionTransformer(
+            in_channels=3,
+            num_classes=3,
+            num_heads=6,
+            depth= 12,
+            embed_dim=config['hidden_size'],
+            img_size=input_size,
+            mlp_ratio=3.,
+            dropout=config['dropout_rate'],
+            attn_dropout=config['dropout_rate'],
+            patch_size=16,
+        ).to(device)
     else:
         raise ValueError(f"Unknown model type: {model_name}")
     
