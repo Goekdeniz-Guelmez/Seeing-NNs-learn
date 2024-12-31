@@ -10,12 +10,12 @@ from tqdm import tqdm
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Define variables
-image_path = 'DatasetImages/evg.jpg'
+image_path = 'DatasetImages/gg.png'
 hidden_size = 200
 num_hidden_layers = 30
-batch_size = 32
+batch_size = 4
 lr = 0.001
-num_epochs = 100
+num_epochs = 5
 proj_name = 'Evangelion_wp'
 save_every_n_iterations = 1
 scheduler_step = 3
@@ -25,7 +25,7 @@ dataset = ImageDataset(image_path)
 # dataset.display_image()
 loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 resx, resy = dataset.width, dataset.height
-linspace = torch.stack(torch.meshgrid(torch.linspace(-1, 1, resx), torch.linspace(1, -1, resy)), dim=-1).to(device)
+linspace = torch.stack(torch.meshgrid(torch.linspace(-1, 1, resx), torch.linspace(1, -1, resy), indexing='ij'), dim=-1).to(device)
 #rotate the linspace 90 degrees
 linspace = torch.rot90(linspace, 1, (0, 1))
 print(linspace.shape)
