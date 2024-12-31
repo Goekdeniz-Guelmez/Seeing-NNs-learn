@@ -78,19 +78,6 @@ def train_model(model_name, config, dataset, device):
             latent_dim=config['hidden_size'],
             input_size=(resx, resy)
         ).to(device)
-    elif model_name == 'VisionTransformer':
-        model = VisionTransformer(
-            in_channels=3,
-            num_classes=3,
-            num_heads=6,
-            depth= 12,
-            embed_dim=config['hidden_size'],
-            img_size=input_size,
-            mlp_ratio=3.,
-            dropout=config['dropout_rate'],
-            attn_dropout=config['dropout_rate'],
-            patch_size=16,
-        ).to(device)
     else:
         raise ValueError(f"Unknown model type: {model_name}")
     
@@ -183,17 +170,33 @@ def create_video(proj_name):
 
 # Configuration
 config = {
-    'image_path': 'DatasetImages/gg.png',
+    'image_path': 'DatasetImages/evg.jpg',
     'hidden_size': 200,
     'num_hidden_layers': 30,
-    'batch_size': 16,
-    'lr': 0.0005,
-    'num_epochs': 5,
+    'batch_size': 32,
+    'lr': 0.001,
+    'num_epochs': 50,
     'proj_name': 'Evangelion_wp',
-    'save_every_n_iterations': 5,
+    'save_every_n_iterations': 1,
     'scheduler_step': 3,
     'dropout_rate': 0.2,
-    'kld_weight': 0.005
+    'kld_weight': 0.005  # for VAE
+}
+
+transformer_config = {
+    'image_path': 'DatasetImages/gg.png',
+    'hidden_size': 768,  # Embedding dimension
+    'batch_size': 8,     # Smaller batch size due to memory requirements
+    'lr': 0.0001,        # Lower learning rate for stability
+    'num_epochs': 100,
+    'proj_name': 'Vision_Transformer_Test',
+    'save_every_n_iterations': 5,
+    'scheduler_step': 5,
+    'dropout_rate': 0.1,
+    'patch_size': 16,
+    'num_heads': 8,
+    'transformer_depth': 12,
+    'mlp_ratio': 4.0
 }
 
 if __name__ == "__main__":
@@ -204,5 +207,5 @@ if __name__ == "__main__":
     dataset = ImageDataset(config['image_path'])
     
     # Train model (choose architecture)
-    model_name = "BasicAutoencoder"
+    model_name = "ConvolutionalAutoencoder"
     trained_model = train_model(model_name, config, dataset, device)
