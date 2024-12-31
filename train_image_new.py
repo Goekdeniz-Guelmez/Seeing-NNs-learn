@@ -196,13 +196,13 @@ def create_video(proj_name):
     )
 
 config = {
-    'image_path': 'DatasetImages/evg.jpg',
-    'hidden_size': 200,
-    'num_hidden_layers': 30,
-    'batch_size': 32,
+    'image_path': 'DatasetImages/gg.png',
+    'hidden_size': 256,
+    'num_hidden_layers': 16,
+    'batch_size': 65536,
     'lr': 0.001,
-    'num_epochs': 50,
-    'proj_name': 'Evangelion_wp',
+    'num_epochs': 4,
+    'proj_name': 'gg',
     'save_every_n_iterations': 1,
     'scheduler_step': 3,
     'dropout_rate': 0.2,
@@ -233,5 +233,5 @@ if __name__ == "__main__":
     dataset = ImageDataset(config['image_path'])
     
     # Train model (choose architecture)
-    model_name = "VariationalAutoencoder"
+    model_name = "SkipConn"
     trained_model = train_model(model_name, config, dataset, device)
