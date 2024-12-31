@@ -3,7 +3,14 @@ import torch.nn.functional as F
 import os
 import matplotlib.pyplot as plt
 from torch import optim, nn
-from src.models import Simple, Fourier, BasicAutoencoder, ConvolutionalAutoencoder, VariationalAutoencoder, CenteredLinearMap
+from src.models import (
+    Simple,
+    Fourier,
+    BasicAutoencoder,
+    ConvolutionalAutoencoder,
+    VariationalAutoencoder,
+    CenteredLinearMap,
+    VisionTransformer)
 from torch.utils.data import DataLoader
 from src.imageDataset import ImageDataset
 from tqdm import tqdm
@@ -30,7 +37,8 @@ def train_model(model_name, config, dataset, device):
     linspace = torch.stack(
         torch.meshgrid(
             torch.linspace(-1, 1, resx),
-            torch.linspace(1, -1, resy)
+            torch.linspace(1, -1, resy),
+            indexing='ij'
         ),
         dim=-1
     ).to(device)
@@ -69,6 +77,19 @@ def train_model(model_name, config, dataset, device):
             base_channels=32,
             latent_dim=config['hidden_size'],
             input_size=(resx, resy)
+        ).to(device)
+    elif model_name == 'VisionTransformer':
+        model = VisionTransformer(
+            in_channels=3,
+            num_classes=3,
+            num_heads=6,
+            depth= 12,
+            embed_dim=config['hidden_size'],
+            img_size=input_size,
+            mlp_ratio=3.,
+            dropout=config['dropout_rate'],
+            attn_dropout=config['dropout_rate'],
+            patch_size=16,
         ).to(device)
     else:
         raise ValueError(f"Unknown model type: {model_name}")
@@ -162,17 +183,17 @@ def create_video(proj_name):
 
 # Configuration
 config = {
-    'image_path': 'DatasetImages/evg.jpg',
+    'image_path': 'DatasetImages/gg.png',
     'hidden_size': 200,
     'num_hidden_layers': 30,
-    'batch_size': 32,
-    'lr': 0.00005,
-    'num_epochs': 100,
+    'batch_size': 16,
+    'lr': 0.0005,
+    'num_epochs': 5,
     'proj_name': 'Evangelion_wp',
-    'save_every_n_iterations': 10,
+    'save_every_n_iterations': 5,
     'scheduler_step': 3,
     'dropout_rate': 0.2,
-    'kld_weight': 0.005  # for VAE
+    'kld_weight': 0.005
 }
 
 if __name__ == "__main__":
@@ -183,5 +204,5 @@ if __name__ == "__main__":
     dataset = ImageDataset(config['image_path'])
     
     # Train model (choose architecture)
-    model_name = "ConvolutionalAutoencoder"  # Change this to train different models
+    model_name = "BasicAutoencoder"
     trained_model = train_model(model_name, config, dataset, device)

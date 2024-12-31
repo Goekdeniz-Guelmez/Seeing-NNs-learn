@@ -837,3 +837,193 @@ class VariationalAutoencoder(nn.Module):
         
         # Decode
         return self.decode(z), mu, log_var
+    
+
+class PatchEmbedding(nn.Module):
+    """
+    Converts input images into patch embeddings.
+    
+    Parameters:
+        img_size (tuple): Input image size (H, W)
+        patch_size (int): Size of each patch
+        in_channels (int): Number of input channels
+        embed_dim (int): Embedding dimension
+    """
+    def __init__(
+            self,
+            img_size: tuple = (224, 224),
+            patch_size: int = 16,
+            in_channels: int = 3,
+            embed_dim: int = 768
+        ):
+        super().__init__()
+        self.img_size = img_size
+        self.patch_size = patch_size
+        self.grid_size = (img_size[0] // patch_size, img_size[1] // patch_size)
+        self.num_patches = self.grid_size[0] * self.grid_size[1]
+        
+        # Linear projection of flattened patches
+        self.proj = nn.Conv2d(in_channels, embed_dim, kernel_size=patch_size, stride=patch_size)
+        
+        # Position embeddings
+        self.pos_embed = nn.Parameter(torch.zeros(1, self.num_patches + 1, embed_dim))
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
+        
+        # Initialize position embeddings
+        nn.init.trunc_normal_(self.pos_embed, std=0.02)
+        nn.init.trunc_normal_(self.cls_token, std=0.02)
+
+    def forward(self, x):
+        B = x.shape[0]
+        
+        # Create patch embeddings
+        x = self.proj(x)  # (B, embed_dim, grid_size[0], grid_size[1])
+        x = x.flatten(2).transpose(1, 2)  # (B, num_patches, embed_dim)
+        
+        # Add cls token
+        cls_tokens = self.cls_token.expand(B, -1, -1)
+        x = torch.cat((cls_tokens, x), dim=1)
+        
+        # Add position embeddings
+        x = x + self.pos_embed
+        
+        return x
+
+
+class TransformerBlock(nn.Module):
+    """
+    Transformer block with multi-head self-attention and feed-forward network.
+    
+    Parameters:
+        dim (int): Input dimension
+        num_heads (int): Number of attention heads
+        mlp_ratio (float): Ratio of mlp hidden dim to embedding dim
+        dropout (float): Dropout rate
+        attn_dropout (float): Attention dropout rate
+    """
+    def __init__(
+            self,
+            dim: int,
+            num_heads: int = 12,
+            mlp_ratio: float = 4.,
+            dropout: float = 0.,
+            attn_dropout: float = 0.
+        ):
+        super().__init__()
+        self.norm1 = nn.LayerNorm(dim)
+        self.attn = nn.MultiheadAttention(dim, num_heads, dropout=attn_dropout, batch_first=True)
+        self.norm2 = nn.LayerNorm(dim)
+        
+        mlp_hidden_dim = int(dim * mlp_ratio)
+        self.mlp = nn.Sequential(
+            nn.Linear(dim, mlp_hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(mlp_hidden_dim, dim),
+            nn.Dropout(dropout)
+        )
+
+    def forward(self, x):
+        # Multi-head self-attention
+        x = x + self.attn(*[self.norm1(x)] * 3)[0]
+        
+        # MLP block
+        x = x + self.mlp(self.norm2(x))
+        return x
+
+
+class VisionTransformer(nn.Module):
+    """
+    Vision Transformer for image processing.
+    
+    Parameters:
+        img_size (tuple): Input image size (default: (224, 224))
+        patch_size (int): Size of image patches (default: 16)
+        in_channels (int): Number of input channels (default: 3)
+        num_classes (int): Number of output channels (default: 3 for RGB reconstruction)
+        embed_dim (int): Embedding dimension (default: 768)
+        depth (int): Number of transformer blocks (default: 12)
+        num_heads (int): Number of attention heads (default: 12)
+        mlp_ratio (float): Ratio of mlp hidden dim to embedding dim (default: 4.0)
+        dropout (float): Dropout rate (default: 0.0)
+        attn_dropout (float): Attention dropout rate (default: 0.0)
+    """
+    def __init__(
+        self,
+        img_size: tuple = (224, 224),
+        patch_size: int = 16,
+        in_channels: int = 3,
+        num_classes: int = 3,
+        embed_dim: int = 768,
+        depth: int = 12,
+        num_heads: int = 12,
+        mlp_ratio: float = 4.,
+        dropout: float = 0.,
+        attn_dropout: float = 0.
+    ):
+        super().__init__()
+        
+        # Patch embedding
+        self.patch_embed = PatchEmbedding(
+            img_size=img_size,
+            patch_size=patch_size,
+            in_channels=in_channels,
+            embed_dim=embed_dim
+        )
+        
+        # Transformer blocks
+        self.blocks = nn.ModuleList([
+            TransformerBlock(
+                dim=embed_dim,
+                num_heads=num_heads,
+                mlp_ratio=mlp_ratio,
+                dropout=dropout,
+                attn_dropout=attn_dropout
+            )
+            for _ in range(depth)
+        ])
+        
+        # Output head
+        self.norm = nn.LayerNorm(embed_dim)
+        self.head = nn.Linear(embed_dim, patch_size * patch_size * num_classes)
+        
+        # Store parameters for reconstruction
+        self.patch_size = patch_size
+        self.img_size = img_size
+        self.num_classes = num_classes
+        
+        # Initialize weights
+        self.apply(self._init_weights)
+        
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            nn.init.trunc_normal_(m.weight, std=0.02)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    def forward(self, x):
+        # Patch embedding
+        x = self.patch_embed(x)
+        
+        # Apply transformer blocks
+        for block in self.blocks:
+            x = block(x)
+        
+        # Process output
+        x = self.norm(x)
+        x = x[:, 1:]  # Remove cls token
+        x = self.head(x)
+        
+        # Reshape to image format
+        B = x.shape[0]
+        x = x.reshape(B, self.patch_embed.grid_size[0], self.patch_embed.grid_size[1], self.patch_size, self.patch_size, self.num_classes)
+        x = x.permute(0, 5, 1, 3, 2, 4).contiguous()
+        x = x.reshape(B, self.num_classes, self.img_size[0], self.img_size[1])
+        
+        return torch.sigmoid(x)  # Output in range [0,1]
+
+    def extra_repr(self) -> str:
+        return f'img_size={self.img_size}, patch_size={self.patch_size}'
