@@ -196,16 +196,16 @@ def create_video(proj_name):
     )
 
 config = {
-    'image_path': 'DatasetImages/gg.png',
-    'hidden_size': 256,
-    'num_hidden_layers': 16,
-    'batch_size': 4,
-    'lr': 0.00001,
-    'num_epochs': 4,
-    'proj_name': 'gg',
-    'save_every_n_iterations': 10,
-    'scheduler_step': 3,
-    'dropout_rate': 0.2,
+    'image_path': 'DatasetImages/IMG_6317.JPG',
+    'hidden_size': 512,
+    'num_hidden_layers': 24,
+    'batch_size': 512,
+    'lr': 0.0005,
+    'num_epochs': 50,
+    'proj_name': 'ai5',
+    'save_every_n_iterations': 100,
+    'scheduler_step': 10,
+    'dropout_rate': 0.1,
     'kld_weight': 0.005  # for VAE
 }
 
