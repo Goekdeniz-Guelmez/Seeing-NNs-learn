@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from src.videomaker import renderModel
 from tqdm import tqdm
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "mps")
 
 # Define variables
 image_path = 'DatasetImages/gg.png'
@@ -16,7 +16,7 @@ num_hidden_layers = 30
 batch_size = 4
 lr = 0.001
 num_epochs = 5
-proj_name = 'Evangelion_wp'
+proj_name = 'gg_again'
 save_every_n_iterations = 1
 scheduler_step = 3
 

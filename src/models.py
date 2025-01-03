@@ -66,6 +66,44 @@ class Simple(nn.Module):
         """
         # Pass through network and map to [0,1] range
         return (self.tanh(self.seq(x)) + 1) / 2
+    
+
+class MLP(nn.Module):
+    """
+    A 3 layer MLP PyTorch model with a SwiGLU Activation Function.
+
+    Parameters:
+        init_size (int): Input feature dimension
+        hidden_size (int): Number of neurons per hidden layer
+        multibplier (float): Number to multiply the hidden size by to get the number of neurons in the next layer
+        dropout_rate (float): Dropout probability (default: 0.2)
+    """
+    def __init__(
+			self,
+			input_size: int = 2,
+            hidden_size: int = 100,
+			multibplier: float = 4.,
+			dropout_rate: float = 0.2
+		):
+        super(Simple, self).__init__()
+
+        hidden_size = int(hidden_size * multibplier)
+        
+        w1 = nn.Linear(input_size, hidden_size)
+        w3 = nn.Linear(hidden_size, hidden_size)
+        w2 = nn.Linear(hidden_size, 1)
+
+    def forward(self, x):
+        """
+        Forward pass of the model.
+        
+        Args:
+            x (torch.Tensor): Input tensor
+            
+        Returns:
+            torch.Tensor: Output tensor mapped to range [0,1]
+        """
+        return self.w2(x.silu(self.w1(x) * self.w3(x)))
 
 
 class SkipConn(nn.Module):
